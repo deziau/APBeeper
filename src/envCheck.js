@@ -1,21 +1,31 @@
-
 const dotenv = require('dotenv');
 const logger = require('./utils/logger');
 
 // Load environment variables
 dotenv.config();
 
+// Check if we're in health-check-only mode (Railway deployment)
+const isHealthCheckOnly = process.env.RAILWAY_ENVIRONMENT && !process.env.DISCORD_TOKEN;
+
 // Debug: Show what environment variables are being loaded
-console.log('🔍 Environment Variables Debug:');
-console.log('DISCORD_TOKEN:', process.env.DISCORD_TOKEN ? `${process.env.DISCORD_TOKEN.substring(0, 10)}...` : 'NOT SET');
-console.log('CLIENT_ID:', process.env.CLIENT_ID ? `${process.env.CLIENT_ID}` : 'NOT SET');
-console.log('TWITCH_CLIENT_ID:', process.env.TWITCH_CLIENT_ID ? `${process.env.TWITCH_CLIENT_ID.substring(0, 10)}...` : 'NOT SET');
-console.log('DATABASE_PATH:', process.env.DATABASE_PATH || 'NOT SET');
-console.log('LOG_LEVEL:', process.env.LOG_LEVEL || 'NOT SET');
-console.log('');
+if (!isHealthCheckOnly) {
+    console.log('🔍 Environment Variables Debug:');
+    console.log('DISCORD_TOKEN:', process.env.DISCORD_TOKEN ? `${process.env.DISCORD_TOKEN.substring(0, 10)}...` : 'NOT SET');
+    console.log('CLIENT_ID:', process.env.CLIENT_ID ? `${process.env.CLIENT_ID}` : 'NOT SET');
+    console.log('TWITCH_CLIENT_ID:', process.env.TWITCH_CLIENT_ID ? `${process.env.TWITCH_CLIENT_ID.substring(0, 10)}...` : 'NOT SET');
+    console.log('DATABASE_PATH:', process.env.DATABASE_PATH || 'NOT SET');
+    console.log('LOG_LEVEL:', process.env.LOG_LEVEL || 'NOT SET');
+    console.log('');
+}
 
 // Validation function
 function validateEnvironmentVariables() {
+    // Skip validation if we're in health-check-only mode
+    if (isHealthCheckOnly) {
+        console.log('🏥 Health-check-only mode detected - skipping Discord credentials validation');
+        return;
+    }
+
     const requiredVars = {
         'DISCORD_TOKEN': process.env.DISCORD_TOKEN,
         'CLIENT_ID': process.env.CLIENT_ID
@@ -66,8 +76,11 @@ function validateEnvironmentVariables() {
     console.log('');
 }
 
-// Export the validation function
-module.exports = { validateEnvironmentVariables };
+// Export the validation function and health check mode flag
+module.exports = { 
+    validateEnvironmentVariables,
+    isHealthCheckOnly 
+};
 
 // Run validation immediately when this module is required
 validateEnvironmentVariables();
