@@ -1,10 +1,10 @@
-### Use Node.js 18 LTS with Debian base for better sqlite3 compatibility
+# Use Node.js 18 LTS with Debian base for better sqlite3 compatibility
 FROM node:18-slim
 
-### Set working directory
+# Set working directory
 WORKDIR /app
 
-### Install build dependencies for native modules like sqlite3
+# Install build dependencies for native modules like sqlite3
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 \
     make \
@@ -13,26 +13,26 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libsqlite3-dev \
     && rm -rf /var/lib/apt/lists/*
 
-### Copy package files first for better Docker layer caching
+# Copy package files first for better Docker layer caching
 COPY package*.json ./
 
-### Install dependencies
-RUN npm ci --omit=dev
+# Install dependencies
+RUN npm install --omit=dev
 
-### Copy application source code
+# Copy application source code
 COPY . .
 
-### Create a non-root user for security
+# Create a non-root user for security
 RUN groupadd -r appuser && useradd -r -g appuser appuser
 RUN chown -R appuser:appuser /app
 USER appuser
 
-### Expose the port the app runs on
+# Expose the port the app runs on
 EXPOSE 3000
 
-### Health check
+# Health check
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-    CMD curl -f https://49ff29cb4.preview.abacusai.app || exit 1
+    CMD curl -f  || exit 1
 
-### Start the application
+# Start the application
 CMD ["npm", "start"]
