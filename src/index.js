@@ -1,11 +1,10 @@
-
 const { Client, GatewayIntentBits, Collection, REST, Routes } = require('discord.js');
 const { readdirSync } = require('fs');
 const { join } = require('path');
 const cron = require('node-cron');
 
 // Load and validate environment variables first
-require('./envCheck');
+const { isHealthCheckOnly } = require('./envCheck');
 
 const { initializeDatabase } = require('./database');
 const { updateAPBPanels } = require('./services/apbPopulation');
@@ -15,22 +14,28 @@ const HealthServer = require('./health');
 
 class APBeeperBot {
     constructor() {
-        this.client = new Client({
-            intents: [
-                GatewayIntentBits.Guilds,
-                GatewayIntentBits.GuildMessages,
-                GatewayIntentBits.GuildPresences,
-                GatewayIntentBits.GuildMembers
-            ]
-        });
-        
-        this.client.commands = new Collection();
         this.healthServer = new HealthServer(this);
-        this.loadCommands();
-        this.setupEventHandlers();
+        
+        // Only initialize Discord client if not in health-check-only mode
+        if (!isHealthCheckOnly) {
+            this.client = new Client({
+                intents: [
+                    GatewayIntentBits.Guilds,
+                    GatewayIntentBits.GuildMessages,
+                    GatewayIntentBits.GuildPresences,
+                    GatewayIntentBits.GuildMembers
+                ]
+            });
+            
+            this.client.commands = new Collection();
+            this.loadCommands();
+            this.setupEventHandlers();
+        }
     }
 
     loadCommands() {
+        if (isHealthCheckOnly) return;
+        
         const commandsPath = join(__dirname, 'commands');
         const commandFiles = readdirSync(commandsPath).filter(file => file.endsWith('.js'));
 
@@ -48,6 +53,8 @@ class APBeeperBot {
     }
 
     setupEventHandlers() {
+        if (isHealthCheckOnly) return;
+        
         this.client.once('ready', async () => {
             logger.info(`${this.client.user.tag} is online!`);
             
@@ -94,6 +101,8 @@ class APBeeperBot {
     }
 
     async deployCommands() {
+        if (isHealthCheckOnly) return;
+        
         const commands = [];
         for (const command of this.client.commands.values()) {
             commands.push(command.data.toJSON());
@@ -116,6 +125,8 @@ class APBeeperBot {
     }
 
     startScheduledTasks() {
+        if (isHealthCheckOnly) return;
+        
         // Update APB population panels every 5 minutes
         cron.schedule('*/5 * * * *', async () => {
             try {
@@ -139,10 +150,15 @@ class APBeeperBot {
 
     async start() {
         try {
-            // Start health server
-            this.healthServer.start();
+            // Always start health server first
+            await this.healthServer.start();
             
-            // Login to Discord
+            if (isHealthCheckOnly) {
+                logger.info('Running in health-check-only mode for Railway deployment');
+                return;
+            }
+            
+            // Login to Discord only if not in health-check mode
             await this.client.login(process.env.DISCORD_TOKEN);
         } catch (error) {
             logger.error('Failed to start bot:', error);
@@ -155,10 +171,12 @@ class APBeeperBot {
         
         try {
             // Stop health server
-            this.healthServer.stop();
+            await this.healthServer.stop();
             
-            // Destroy Discord client
-            this.client.destroy();
+            // Destroy Discord client if it exists
+            if (this.client) {
+                this.client.destroy();
+            }
             
             logger.info('Bot shutdown complete');
         } catch (error) {
