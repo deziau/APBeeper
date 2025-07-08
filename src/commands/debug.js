@@ -1,6 +1,5 @@
 const { SlashCommandBuilder, PermissionFlagsBits } = require('discord.js');
-const { debugPresence } = require('../services/playersTracking');
-const { createInfoEmbed } = require('../utils/embedStyles');
+const { debugUser } = require('../services/playersTracking');
 const logger = require('../utils/logger');
 
 module.exports = {
@@ -18,19 +17,24 @@ module.exports = {
             const user = interaction.options.getUser('user') || interaction.user;
             
             await interaction.reply({
-                content: `🔍 Debugging presence for ${user.tag}... Check the logs!`,
-                flags: 64 // MessageFlags.Ephemeral
+                content: `🔍 Debugging presence for ${user.tag}... Check the Railway logs for details!`,
+                flags: 64
             });
             
-            // Run debug
-            await debugPresence(interaction.client, interaction.guild.id, user.id);
+            // Run debug in background
+            setTimeout(async () => {
+                await debugUser(interaction.client, interaction.guild.id, user.id);
+            }, 1000);
             
         } catch (error) {
-            logger.error('Error in debug command:', error);
-            await interaction.reply({
-                content: 'Error running debug command.',
-                flags: 64 // MessageFlags.Ephemeral
-            });
+            logger.error('❌ Debug command error:', error);
+            
+            if (!interaction.replied) {
+                await interaction.reply({
+                    content: '❌ Error running debug command.',
+                    flags: 64
+                });
+            }
         }
     }
 };
