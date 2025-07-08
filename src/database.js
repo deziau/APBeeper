@@ -1,292 +1,248 @@
-
 const sqlite3 = require('sqlite3').verbose();
-const { Client } = require('pg');
-const { join } = require('path');
-const { mkdirSync, existsSync } = require('fs');
+const path = require('path');
 const logger = require('./utils/logger');
 
-const DB_PATH = process.env.DATABASE_PATH || './data/apbeeper.db';
-const DATABASE_URL = process.env.DATABASE_URL;
-
-// Determine database type
-const isPostgreSQL = !!DATABASE_URL;
-const isSQLite = !isPostgreSQL;
-
-// Ensure data directory exists
-const dataDir = join(__dirname, '..', 'data');
-if (!existsSync(dataDir)) {
-    mkdirSync(dataDir, { recursive: true });
-}
+const dbPath = process.env.DATABASE_PATH || path.join(__dirname, '..', 'data', 'apbeeper.db');
 
 let db;
 
-// Promise wrapper for sqlite3 to provide synchronous-like interface
-class DatabaseWrapper {
-    constructor(dbInstance) {
-        this.db = dbInstance;
-    }
-
-    exec(sql) {
-        return new Promise((resolve, reject) => {
-            this.db.exec(sql, (err) => {
-                if (err) reject(err);
-                else resolve();
-            });
+function initializeDatabase() {
+    return new Promise((resolve, reject) => {
+        db = new sqlite3.Database(dbPath, (err) => {
+            if (err) {
+                logger.error('Error opening database:', err);
+                reject(err);
+                return;
+            }
+            
+            logger.info('Connected to SQLite database');
+            
+            // Create tables
+            createTables()
+                .then(() => {
+                    logger.info('Database tables initialized');
+                    resolve();
+                })
+                .catch(reject);
         });
-    }
-
-    prepare(sql) {
-        const stmt = this.db.prepare(sql);
-        return new StatementWrapper(stmt);
-    }
-
-    pragma(pragma) {
-        return new Promise((resolve, reject) => {
-            this.db.run(`PRAGMA ${pragma}`, (err) => {
-                if (err) reject(err);
-                else resolve();
-            });
-        });
-    }
+    });
 }
 
-class StatementWrapper {
-    constructor(stmt) {
-        this.stmt = stmt;
-    }
+function createTables() {
+    return new Promise((resolve, reject) => {
+        const tables = [
+            // Existing APB panels table
+            `CREATE TABLE IF NOT EXISTS apb_panels (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                guild_id TEXT NOT NULL,
+                channel_id TEXT NOT NULL,
+                message_id TEXT,
+                region TEXT NOT NULL,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )`,
+            
+            // New players panels table
+            `CREATE TABLE IF NOT EXISTS players_panels (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                guild_id TEXT NOT NULL,
+                channel_id TEXT NOT NULL,
+                message_id TEXT,
+                game_name TEXT NOT NULL,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(guild_id, channel_id, game_name)
+            )`,
+            
+            // New player sessions table
+            `CREATE TABLE IF NOT EXISTS player_sessions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id TEXT NOT NULL,
+                guild_id TEXT NOT NULL,
+                game_name TEXT NOT NULL,
+                started_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                ended_at DATETIME,
+                duration INTEGER,
+                is_active BOOLEAN DEFAULT 1,
+                INDEX(user_id, guild_id, game_name),
+                INDEX(is_active)
+            )`
+        ];
 
-    get(...params) {
-        return new Promise((resolve, reject) => {
-            this.stmt.get(...params, (err, row) => {
-                if (err) reject(err);
-                else resolve(row);
+        let completed = 0;
+        tables.forEach((sql, index) => {
+            db.run(sql, (err) => {
+                if (err) {
+                    logger.error(`Error creating table ${index}:`, err);
+                    reject(err);
+                    return;
+                }
+                
+                completed++;
+                if (completed === tables.length) {
+                    resolve();
+                }
             });
         });
-    }
-
-    all(...params) {
-        return new Promise((resolve, reject) => {
-            this.stmt.all(...params, (err, rows) => {
-                if (err) reject(err);
-                else resolve(rows || []);
-            });
-        });
-    }
-
-    run(...params) {
-        return new Promise((resolve, reject) => {
-            this.stmt.run(...params, function(err) {
-                if (err) reject(err);
-                else resolve({ changes: this.changes, lastID: this.lastID });
-            });
-        });
-    }
+    });
 }
 
-async function initializeDatabase() {
-    try {
-        const dbInstance = new sqlite3.Database(DB_PATH);
-        db = new DatabaseWrapper(dbInstance);
+// APB Panels functions
+function getAPBPanels() {
+    return new Promise((resolve, reject) => {
+        db.all('SELECT * FROM apb_panels', (err, rows) => {
+            if (err) reject(err);
+            else resolve(rows);
+        });
+    });
+}
+
+function addAPBPanel(guildId, channelId, region) {
+    return new Promise((resolve, reject) => {
+        const sql = 'INSERT INTO apb_panels (guild_id, channel_id, region) VALUES (?, ?, ?)';
+        db.run(sql, [guildId, channelId, region], function(err) {
+            if (err) reject(err);
+            else resolve(this.lastID);
+        });
+    });
+}
+
+function updateAPBPanelMessage(id, messageId) {
+    return new Promise((resolve, reject) => {
+        const sql = 'UPDATE apb_panels SET message_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?';
+        db.run(sql, [messageId, id], (err) => {
+            if (err) reject(err);
+            else resolve();
+        });
+    });
+}
+
+function removeAPBPanel(guildId, channelId) {
+    return new Promise((resolve, reject) => {
+        const sql = 'DELETE FROM apb_panels WHERE guild_id = ? AND channel_id = ?';
+        db.run(sql, [guildId, channelId], (err) => {
+            if (err) reject(err);
+            else resolve();
+        });
+    });
+}
+
+// Players Panels functions
+function getPlayersPanel(guildId, channelId, gameName) {
+    return new Promise((resolve, reject) => {
+        const sql = 'SELECT * FROM players_panels WHERE guild_id = ? AND channel_id = ? AND game_name = ?';
+        db.get(sql, [guildId, channelId, gameName], (err, row) => {
+            if (err) reject(err);
+            else resolve(row);
+        });
+    });
+}
+
+function getAllPlayersPanels() {
+    return new Promise((resolve, reject) => {
+        db.all('SELECT * FROM players_panels', (err, rows) => {
+            if (err) reject(err);
+            else resolve(rows);
+        });
+    });
+}
+
+function addPlayersPanel(guildId, channelId, gameName) {
+    return new Promise((resolve, reject) => {
+        const sql = 'INSERT OR REPLACE INTO players_panels (guild_id, channel_id, game_name) VALUES (?, ?, ?)';
+        db.run(sql, [guildId, channelId, gameName], function(err) {
+            if (err) reject(err);
+            else resolve(this.lastID);
+        });
+    });
+}
+
+function updatePlayersPanelMessage(id, messageId) {
+    return new Promise((resolve, reject) => {
+        const sql = 'UPDATE players_panels SET message_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?';
+        db.run(sql, [messageId, id], (err) => {
+            if (err) reject(err);
+            else resolve();
+        });
+    });
+}
+
+function removePlayersPanel(guildId, channelId, gameName) {
+    return new Promise((resolve, reject) => {
+        const sql = 'DELETE FROM players_panels WHERE guild_id = ? AND channel_id = ? AND game_name = ?';
+        db.run(sql, [guildId, channelId, gameName], (err) => {
+            if (err) reject(err);
+            else resolve();
+        });
+    });
+}
+
+// Player Sessions functions
+function startPlayerSession(userId, guildId, gameName) {
+    return new Promise((resolve, reject) => {
+        // End any existing active session first
+        const endSql = 'UPDATE player_sessions SET ended_at = CURRENT_TIMESTAMP, is_active = 0, duration = (julianday(CURRENT_TIMESTAMP) - julianday(started_at)) * 86400000 WHERE user_id = ? AND guild_id = ? AND game_name = ? AND is_active = 1';
         
-        await db.pragma('journal_mode = WAL');
-        
-        // Create tables
-        await createTables();
-        
-        logger.info('Database initialized successfully');
-        return db;
-    } catch (error) {
-        logger.error('Failed to initialize database:', error);
-        throw error;
-    }
+        db.run(endSql, [userId, guildId, gameName], (err) => {
+            if (err) {
+                reject(err);
+                return;
+            }
+            
+            // Start new session
+            const startSql = 'INSERT INTO player_sessions (user_id, guild_id, game_name) VALUES (?, ?, ?)';
+            db.run(startSql, [userId, guildId, gameName], function(err) {
+                if (err) reject(err);
+                else resolve(this.lastID);
+            });
+        });
+    });
 }
 
-async function createTables() {
-    // Server settings table
-    await db.exec(`
-        CREATE TABLE IF NOT EXISTS server_settings (
-            guild_id TEXT PRIMARY KEY,
-            game_name TEXT DEFAULT 'APB: Reloaded',
-            clan_role_id TEXT,
-            apb_channel_id TEXT,
-            twitch_enabled BOOLEAN DEFAULT 1,
-            twitch_channel_id TEXT,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-        )
-    `);
-
-    // APB panels table for tracking auto-updating messages
-    await db.exec(`
-        CREATE TABLE IF NOT EXISTS apb_panels (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            guild_id TEXT NOT NULL,
-            channel_id TEXT NOT NULL,
-            message_id TEXT NOT NULL,
-            region TEXT NOT NULL CHECK(region IN ('NA', 'EU', 'BOTH')),
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            UNIQUE(guild_id, channel_id, region)
-        )
-    `);
-
-    // Twitch streamers table
-    await db.exec(`
-        CREATE TABLE IF NOT EXISTS twitch_streamers (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            guild_id TEXT NOT NULL,
-            user_id TEXT NOT NULL,
-            username TEXT NOT NULL,
-            twitch_url TEXT NOT NULL,
-            is_live BOOLEAN DEFAULT 0,
-            last_notified DATETIME,
-            added_by TEXT,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            UNIQUE(guild_id, user_id)
-        )
-    `);
-
-    // Create indexes for better performance
-    await db.exec(`CREATE INDEX IF NOT EXISTS idx_server_settings_guild_id ON server_settings(guild_id)`);
-    await db.exec(`CREATE INDEX IF NOT EXISTS idx_apb_panels_guild_id ON apb_panels(guild_id)`);
-    await db.exec(`CREATE INDEX IF NOT EXISTS idx_twitch_streamers_guild_id ON twitch_streamers(guild_id)`);
-    await db.exec(`CREATE INDEX IF NOT EXISTS idx_twitch_streamers_user_id ON twitch_streamers(user_id)`);
+function endPlayerSession(userId, guildId, gameName) {
+    return new Promise((resolve, reject) => {
+        const sql = 'UPDATE player_sessions SET ended_at = CURRENT_TIMESTAMP, is_active = 0, duration = (julianday(CURRENT_TIMESTAMP) - julianday(started_at)) * 86400000 WHERE user_id = ? AND guild_id = ? AND game_name = ? AND is_active = 1';
+        db.run(sql, [userId, guildId, gameName], (err) => {
+            if (err) reject(err);
+            else resolve();
+        });
+    });
 }
 
-// Server settings functions
-async function getServerSettings(guildId) {
-    const stmt = db.prepare('SELECT * FROM server_settings WHERE guild_id = ?');
-    let settings = await stmt.get(guildId);
-    
-    if (!settings) {
-        // Create default settings for new server
-        settings = await createDefaultServerSettings(guildId);
-    }
-    
-    return settings;
+function getActivePlayerSessions(guildId, gameName) {
+    return new Promise((resolve, reject) => {
+        const sql = 'SELECT * FROM player_sessions WHERE guild_id = ? AND game_name = ? AND is_active = 1 ORDER BY started_at DESC';
+        db.all(sql, [guildId, gameName], (err, rows) => {
+            if (err) reject(err);
+            else resolve(rows);
+        });
+    });
 }
 
-async function createDefaultServerSettings(guildId) {
-    const stmt = db.prepare(`
-        INSERT INTO server_settings (guild_id, game_name, twitch_enabled)
-        VALUES (?, ?, ?)
-        ON CONFLICT(guild_id) DO NOTHING
-    `);
-    
-    await stmt.run(guildId, 'APB: Reloaded', 1);
-    
-    return {
-        guild_id: guildId,
-        game_name: 'APB: Reloaded',
-        clan_role_id: null,
-        apb_channel_id: null,
-        twitch_enabled: 1,
-        twitch_channel_id: null
-    };
-}
-
-async function updateServerSetting(guildId, key, value) {
-    const stmt = db.prepare(`
-        INSERT INTO server_settings (guild_id, ${key}, updated_at)
-        VALUES (?, ?, CURRENT_TIMESTAMP)
-        ON CONFLICT(guild_id) DO UPDATE SET
-        ${key} = excluded.${key},
-        updated_at = CURRENT_TIMESTAMP
-    `);
-    
-    return await stmt.run(guildId, value);
-}
-
-// APB panels functions
-async function getAPBPanels(guildId) {
-    const stmt = db.prepare('SELECT * FROM apb_panels WHERE guild_id = ?');
-    return await stmt.all(guildId);
-}
-
-async function addAPBPanel(guildId, channelId, messageId, region) {
-    const stmt = db.prepare(`
-        INSERT INTO apb_panels (guild_id, channel_id, message_id, region)
-        VALUES (?, ?, ?, ?)
-        ON CONFLICT(guild_id, channel_id, region) DO UPDATE SET
-        message_id = excluded.message_id
-    `);
-    
-    return await stmt.run(guildId, channelId, messageId, region);
-}
-
-async function removeAPBPanel(guildId, channelId, region) {
-    const stmt = db.prepare('DELETE FROM apb_panels WHERE guild_id = ? AND channel_id = ? AND region = ?');
-    return await stmt.run(guildId, channelId, region);
-}
-
-async function getAllAPBPanels() {
-    const stmt = db.prepare('SELECT * FROM apb_panels');
-    return await stmt.all();
-}
-
-// Twitch streamers functions
-async function getTwitchStreamers(guildId) {
-    const stmt = db.prepare('SELECT * FROM twitch_streamers WHERE guild_id = ?');
-    return await stmt.all(guildId);
-}
-
-async function addTwitchStreamer(guildId, userId, username, twitchUrl, addedBy = null) {
-    const stmt = db.prepare(`
-        INSERT INTO twitch_streamers (guild_id, user_id, username, twitch_url, added_by)
-        VALUES (?, ?, ?, ?, ?)
-        ON CONFLICT(guild_id, user_id) DO UPDATE SET
-        username = excluded.username,
-        twitch_url = excluded.twitch_url,
-        added_by = excluded.added_by
-    `);
-    
-    return await stmt.run(guildId, userId, username, twitchUrl, addedBy);
-}
-
-async function removeTwitchStreamer(guildId, userId) {
-    const stmt = db.prepare('DELETE FROM twitch_streamers WHERE guild_id = ? AND user_id = ?');
-    return await stmt.run(guildId, userId);
-}
-
-async function updateStreamerLiveStatus(guildId, userId, isLive, lastNotified = null) {
-    const stmt = db.prepare(`
-        UPDATE twitch_streamers 
-        SET is_live = ?, last_notified = COALESCE(?, last_notified)
-        WHERE guild_id = ? AND user_id = ?
-    `);
-    
-    return await stmt.run(isLive, lastNotified, guildId, userId);
-}
-
-async function getAllTwitchStreamers() {
-    const stmt = db.prepare('SELECT * FROM twitch_streamers');
-    return await stmt.all();
-}
-
-// Cleanup functions
-async function cleanupOldData() {
-    // Remove panels for messages that no longer exist (could be expanded with actual message checking)
-    // Remove old notifications older than 30 days
-    const stmt = db.prepare(`
-        UPDATE twitch_streamers 
-        SET is_live = 0, last_notified = NULL 
-        WHERE last_notified < datetime('now', '-30 days')
-    `);
-    
-    return await stmt.run();
+function cleanupOldSessions() {
+    return new Promise((resolve, reject) => {
+        // Clean up sessions older than 24 hours that are still marked as active
+        const sql = 'UPDATE player_sessions SET ended_at = started_at, is_active = 0, duration = 0 WHERE is_active = 1 AND julianday(CURRENT_TIMESTAMP) - julianday(started_at) > 1';
+        db.run(sql, (err) => {
+            if (err) reject(err);
+            else resolve();
+        });
+    });
 }
 
 module.exports = {
     initializeDatabase,
-    getServerSettings,
-    updateServerSetting,
     getAPBPanels,
     addAPBPanel,
+    updateAPBPanelMessage,
     removeAPBPanel,
-    getAllAPBPanels,
-    getTwitchStreamers,
-    addTwitchStreamer,
-    removeTwitchStreamer,
-    updateStreamerLiveStatus,
-    getAllTwitchStreamers,
-    cleanupOldData
+    getPlayersPanel,
+    getAllPlayersPanels,
+    addPlayersPanel,
+    updatePlayersPanelMessage,
+    removePlayersPanel,
+    startPlayerSession,
+    endPlayerSession,
+    getActivePlayerSessions,
+    cleanupOldSessions
 };
