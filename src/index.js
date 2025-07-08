@@ -125,14 +125,15 @@ class APBeeperBot {
 
         // Handle presence updates for player tracking (only if database is ready)
         this.client.on('presenceUpdate', async (oldPresence, newPresence) => {
-            if (!this.databaseReady) return;
-            
-            try {
-                await handlePresenceUpdate(oldPresence, newPresence);
-            } catch (error) {
-                logger.error('Error handling presence update:', error);
-            }
-        });
+    if (!this.databaseReady) return;
+    
+    try {
+        logger.info(`🔄 Presence update detected for ${newPresence?.user?.tag || 'unknown user'}`);
+        await handlePresenceUpdate(oldPresence, newPresence);
+    } catch (error) {
+        logger.error('❌ Error handling presence update:', error);
+    }
+});
 
         this.client.on('guildCreate', guild => {
             logger.info(`Joined new guild: ${guild.name} (${guild.id})`);
