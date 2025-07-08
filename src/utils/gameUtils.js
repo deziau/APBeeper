@@ -86,7 +86,7 @@ function getGenericGameIcon(gameName) {
     
     // For now, return a generic gaming icon
     // In a real implementation, you might generate a custom icon or use a service
-    return `https://via.placeholder.com/256/7289da/ffffff?text=${encodeURIComponent(gameInitials)}`;
+    return `https://cdn.discordapp.com/attachments/123456789/game-placeholder.png`;
 }
 
 /**
