@@ -1,22 +1,17 @@
 const { EmbedBuilder } = require('discord.js');
-const { getGameIcon, formatShortDuration, getActivityEmoji } = require('./gameUtils');
+const { getGameIcon, formatDuration } = require('./gameUtils');
+const logger = require('./logger');
 
-// Discord color constants
+// Color constants
 const COLORS = {
-    PRIMARY: 0x5865F2,    // Discord Blurple
-    SUCCESS: 0x57F287,    // Green
-    WARNING: 0xFEE75C,    // Yellow
-    ERROR: 0xED4245,      // Red
-    SECONDARY: 0x99AAB5,  // Gray
-    APB_CITADEL: 0xFF6B35, // Orange for Citadel
-    APB_JERICHO: 0x4ECDC4, // Teal for Jericho
-    GAME_ONLINE: 0x57F287, // Green for online players
-    GAME_IDLE: 0xFEE75C    // Yellow for idle
+    SUCCESS: 0x00ff00,
+    ERROR: 0xff0000,
+    INFO: 0x0099ff,
+    WARNING: 0xffaa00,
+    PLAYERS: 0x7289da,
+    GAME: 0x9932cc
 };
 
-/**
- * Create a success embed
- */
 function createSuccessEmbed(title, description) {
     return new EmbedBuilder()
         .setColor(COLORS.SUCCESS)
@@ -25,9 +20,6 @@ function createSuccessEmbed(title, description) {
         .setTimestamp();
 }
 
-/**
- * Create an error embed
- */
 function createErrorEmbed(title, description) {
     return new EmbedBuilder()
         .setColor(COLORS.ERROR)
@@ -36,9 +28,14 @@ function createErrorEmbed(title, description) {
         .setTimestamp();
 }
 
-/**
- * Create a warning embed
- */
+function createInfoEmbed(title, description) {
+    return new EmbedBuilder()
+        .setColor(COLORS.INFO)
+        .setTitle(`ℹ️ ${title}`)
+        .setDescription(description)
+        .setTimestamp();
+}
+
 function createWarningEmbed(title, description) {
     return new EmbedBuilder()
         .setColor(COLORS.WARNING)
@@ -47,251 +44,154 @@ function createWarningEmbed(title, description) {
         .setTimestamp();
 }
 
-/**
- * Create an info embed
- */
-function createInfoEmbed(title, description) {
-    return new EmbedBuilder()
-        .setColor(COLORS.PRIMARY)
-        .setTitle(`ℹ️ ${title}`)
-        .setDescription(description)
-        .setTimestamp();
-}
-
-/**
- * Create APB population embed
- */
-function createAPBEmbed(populationData, region) {
-    const embed = new EmbedBuilder()
-        .setTitle('🎮 APB: All Points Bulletin - Population')
-        .setColor(region === 'Citadel' ? COLORS.APB_CITADEL : 
-                 region === 'Jericho' ? COLORS.APB_JERICHO : COLORS.PRIMARY)
-        .setTimestamp()
-        .setFooter({ text: 'Updates every 5 minutes' });
-
-    if (region === 'Both') {
-        // Both regions
-        embed.setDescription('Current population across all APB servers');
-        
-        if (populationData.citadel) {
-            embed.addFields({
-                name: '🟠 Citadel',
-                value: `**${populationData.citadel.total || 0}** players online\n` +
-                       `Enforcers: ${populationData.citadel.enforcers || 0}\n` +
-                       `Criminals: ${populationData.citadel.criminals || 0}`,
-                inline: true
-            });
-        }
-        
-        if (populationData.jericho) {
-            embed.addFields({
-                name: '🔵 Jericho',
-                value: `**${populationData.jericho.total || 0}** players online\n` +
-                       `Enforcers: ${populationData.jericho.enforcers || 0}\n` +
-                       `Criminals: ${populationData.jericho.criminals || 0}`,
-                inline: true
-            });
-        }
-        
-        const totalPlayers = (populationData.citadel?.total || 0) + (populationData.jericho?.total || 0);
-        embed.addFields({
-            name: '📊 Total Population',
-            value: `**${totalPlayers}** players across all servers`,
-            inline: false
-        });
-        
-    } else {
-        // Single region
-        const data = populationData[region.toLowerCase()] || {};
-        embed.setDescription(`Current population on ${region} server`);
-        
-        embed.addFields(
-            {
-                name: '👥 Total Players',
-                value: `**${data.total || 0}**`,
-                inline: true
-            },
-            {
-                name: '🔵 Enforcers',
-                value: `${data.enforcers || 0}`,
-                inline: true
-            },
-            {
-                name: '🔴 Criminals',
-                value: `${data.criminals || 0}`,
-                inline: true
-            }
-        );
-        
-        if (data.districts && data.districts.length > 0) {
-            const districtInfo = data.districts
-                .map(district => `${district.name}: ${district.population}`)
-                .join('\n');
-            
-            embed.addFields({
-                name: '🏙️ Districts',
-                value: districtInfo,
-                inline: false
-            });
-        }
-    }
-
-    return embed;
-}
-
-/**
- * Create players tracking embed
- */
 async function createPlayersEmbed(gameName, playersData, guild) {
     try {
-        const gameIcon = await getGameIcon(gameName);
-        
         const embed = new EmbedBuilder()
-            .setTitle(`🎮 ${gameName} Players`)
-            .setColor(COLORS.GAME_ONLINE)
-            .setThumbnail(gameIcon)
-            .setTimestamp()
-            .setFooter({ text: 'Updates every 5 minutes • Live tracking via Discord presence' });
+            .setColor(COLORS.PLAYERS)
+            .setTimestamp();
 
-        if (playersData.length === 0) {
-            embed.setDescription(`No one is currently playing **${gameName}** 😴\n\nThe panel will automatically update when members start playing!`);
-            embed.setColor(COLORS.SECONDARY);
+        // Get game icon
+        let gameIcon;
+        try {
+            gameIcon = await getGameIcon(gameName);
+        } catch (error) {
+            logger.warn(`Could not get icon for ${gameName}:`, error);
+            gameIcon = '🎮'; // Fallback emoji
+        }
+
+        // Set title and thumbnail
+        embed.setTitle(`${gameIcon} ${gameName} - Players Online`);
+        
+        if (typeof gameIcon === 'string' && gameIcon.startsWith('http')) {
+            embed.setThumbnail(gameIcon);
+        }
+
+        if (!playersData || playersData.length === 0) {
+            embed.setDescription(`No one is currently playing **${gameName}**.`);
+            embed.addFields({
+                name: '📊 Statistics',
+                value: '• **Active Players:** 0\n• **Total Sessions:** 0\n• **Longest Session:** N/A',
+                inline: false
+            });
             return embed;
         }
 
-        // Separate clan members from regular members
+        // Sort players by play duration (longest first)
+        playersData.sort((a, b) => b.duration - a.duration);
+
+        // Separate clan members and community members
         const clanMembers = [];
         const communityMembers = [];
-        
-        // Check if guild has a clan role (you can customize this logic)
-        const clanRoleNames = ['clan', 'member', 'officer', 'leader', 'admin'];
-        
+
         for (const playerData of playersData) {
-            const hasRole = playerData.member.roles.cache.some(role => 
-                clanRoleNames.some(clanRole => 
-                    role.name.toLowerCase().includes(clanRole)
-                )
-            );
-            
-            if (hasRole) {
-                clanMembers.push(playerData);
-            } else {
-                communityMembers.push(playerData);
+            try {
+                const member = playerData.member;
+                const user = playerData.user;
+                const duration = playerData.duration;
+                
+                // Check if user is a clan member (has specific roles or nickname patterns)
+                const isClanMember = member.roles.cache.some(role => 
+                    role.name.toLowerCase().includes('clan') ||
+                    role.name.toLowerCase().includes('member') ||
+                    role.name.toLowerCase().includes('officer')
+                ) || (member.nickname && member.nickname.includes('[SPPD]'));
+
+                const playerInfo = {
+                    name: member.displayName,
+                    tag: user.tag,
+                    avatar: user.displayAvatarURL({ size: 32 }),
+                    duration: formatDuration(duration),
+                    durationMs: duration
+                };
+
+                if (isClanMember) {
+                    clanMembers.push(playerInfo);
+                } else {
+                    communityMembers.push(playerInfo);
+                }
+            } catch (error) {
+                logger.warn('Error processing player data:', error);
             }
         }
 
-        // Sort by play duration (longest first)
-        clanMembers.sort((a, b) => b.duration - a.duration);
-        communityMembers.sort((a, b) => b.duration - a.duration);
-
-        const totalPlayers = playersData.length;
-        embed.setDescription(`**${totalPlayers}** ${totalPlayers === 1 ? 'player' : 'players'} currently online`);
-
-        // Add clan members section
+        // Build description
+        let description = '';
+        
         if (clanMembers.length > 0) {
-            const clanList = clanMembers
-                .slice(0, 10) // Limit to 10 to avoid embed limits
-                .map(player => {
-                    const emoji = getActivityEmoji(player.duration);
-                    const duration = formatShortDuration(player.duration);
-                    return `${emoji} ${player.user.displayName} - ${duration}`;
-                })
-                .join('\n');
-
-            embed.addFields({
-                name: `👑 Clan Members (${clanMembers.length})`,
-                value: clanList,
-                inline: false
+            description += '**🏛️ Clan Members:**\n';
+            clanMembers.forEach(player => {
+                description += `• **${player.name}** - ${player.duration}\n`;
             });
+            description += '\n';
         }
 
-        // Add community members section
         if (communityMembers.length > 0) {
-            const communityList = communityMembers
-                .slice(0, 10) // Limit to 10 to avoid embed limits
-                .map(player => {
-                    const emoji = getActivityEmoji(player.duration);
-                    const duration = formatShortDuration(player.duration);
-                    return `${emoji} ${player.user.displayName} - ${duration}`;
-                })
-                .join('\n');
-
-            embed.addFields({
-                name: `👥 Community (${communityMembers.length})`,
-                value: communityList,
-                inline: false
+            description += '**👥 Community Members:**\n';
+            communityMembers.forEach(player => {
+                description += `• **${player.name}** - ${player.duration}\n`;
             });
         }
 
-        // Add session statistics if there are multiple players
-        if (playersData.length > 1) {
-            const durations = playersData.map(p => p.duration);
-            const longestSession = Math.max(...durations);
-            const averageSession = durations.reduce((sum, dur) => sum + dur, 0) / durations.length;
-
-            embed.addFields({
-                name: '📊 Session Stats',
-                value: `Longest: ${formatShortDuration(longestSession)} | Average: ${formatShortDuration(averageSession)}`,
-                inline: false
-            });
+        if (description === '') {
+            description = `No one is currently playing **${gameName}**.`;
         }
 
-        // Add legend
+        embed.setDescription(description);
+
+        // Add statistics
+        const totalPlayers = playersData.length;
+        const longestSession = Math.max(...playersData.map(p => p.duration));
+        const averageSession = playersData.reduce((sum, p) => sum + p.duration, 0) / totalPlayers;
+
         embed.addFields({
-            name: '🔍 Legend',
-            value: '🟢 Just started • 🟡 Active • 🟠 Long session • 🔴 Marathon',
-            inline: false
+            name: '📊 Statistics',
+            value: `• **Active Players:** ${totalPlayers}\n` +
+                   `• **Clan Members:** ${clanMembers.length}\n` +
+                   `• **Community:** ${communityMembers.length}\n` +
+                   `• **Longest Session:** ${formatDuration(longestSession)}\n` +
+                   `• **Average Session:** ${formatDuration(averageSession)}`,
+            inline: true
+        });
+
+        // Add server info
+        embed.addFields({
+            name: '🏛️ Server Info',
+            value: `• **Server:** ${guild.name}\n` +
+                   `• **Total Members:** ${guild.memberCount}\n` +
+                   `• **Last Updated:** <t:${Math.floor(Date.now() / 1000)}:R>`,
+            inline: true
+        });
+
+        // Set footer
+        embed.setFooter({
+            text: `${guild.name} • Updates every 5 minutes`,
+            iconURL: guild.iconURL() || undefined
         });
 
         return embed;
-        
+
     } catch (error) {
-        console.error('Error creating players embed:', error);
+        logger.error('Error creating players embed:', error);
         
-        // Fallback embed
+        // Return error embed
         return new EmbedBuilder()
-            .setTitle(`🎮 ${gameName} Players`)
-            .setDescription('Error loading player data. Please try again later.')
             .setColor(COLORS.ERROR)
+            .setTitle(`❌ Error Loading Player Data`)
+            .setDescription(`Could not load player data for **${gameName}**.\nPlease try again later.`)
+            .addFields({
+                name: 'Error Details',
+                value: error.message || 'Unknown error occurred',
+                inline: false
+            })
             .setTimestamp();
     }
-}
-
-/**
- * Create Twitch notification embed
- */
-function createTwitchEmbed(streamData) {
-    const embed = new EmbedBuilder()
-        .setTitle(`🔴 ${streamData.user_name} is now live!`)
-        .setDescription(streamData.title)
-        .setColor(0x9146FF) // Twitch purple
-        .setURL(`https://twitch.tv/${streamData.user_login}`)
-        .setThumbnail(streamData.thumbnail_url?.replace('{width}', '320').replace('{height}', '180'))
-        .addFields(
-            {
-                name: '🎮 Game',
-                value: streamData.game_name || 'Unknown',
-                inline: true
-            },
-            {
-                name: '👥 Viewers',
-                value: streamData.viewer_count?.toString() || '0',
-                inline: true
-            }
-        )
-        .setTimestamp(new Date(streamData.started_at))
-        .setFooter({ text: 'Started streaming' });
-
-    return embed;
 }
 
 module.exports = {
     createSuccessEmbed,
     createErrorEmbed,
-    createWarningEmbed,
     createInfoEmbed,
-    createAPBEmbed,
+    createWarningEmbed,
     createPlayersEmbed,
-    createTwitchEmbed,
     COLORS
 };
