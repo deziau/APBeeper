@@ -9,6 +9,7 @@ const { isHealthCheckOnly } = require('./envCheck');
 const { initializeDatabase } = require('./database');
 const { updateAPBPanels } = require('./services/apbPopulation');
 const { checkTwitchStreams } = require('./services/twitchNotify');
+const { updatePlayersPanels, handlePresenceUpdate, cleanupSessions } = require('./services/playersTracking');
 const logger = require('./utils/logger');
 const HealthServer = require('./health');
 
@@ -91,6 +92,15 @@ class APBeeperBot {
             }
         });
 
+        // Handle presence updates for player tracking
+        this.client.on('presenceUpdate', async (oldPresence, newPresence) => {
+            try {
+                await handlePresenceUpdate(oldPresence, newPresence);
+            } catch (error) {
+                logger.error('Error handling presence update:', error);
+            }
+        });
+
         this.client.on('guildCreate', guild => {
             logger.info(`Joined new guild: ${guild.name} (${guild.id})`);
         });
@@ -136,12 +146,30 @@ class APBeeperBot {
             }
         });
 
+        // Update players panels every 5 minutes
+        cron.schedule('*/5 * * * *', async () => {
+            try {
+                await updatePlayersPanels(this.client);
+            } catch (error) {
+                logger.error('Error updating players panels:', error);
+            }
+        });
+
         // Check Twitch streams every 2 minutes
         cron.schedule('*/2 * * * *', async () => {
             try {
                 await checkTwitchStreams(this.client);
             } catch (error) {
                 logger.error('Error checking Twitch streams:', error);
+            }
+        });
+
+        // Cleanup old player sessions every hour
+        cron.schedule('0 * * * *', async () => {
+            try {
+                await cleanupSessions();
+            } catch (error) {
+                logger.error('Error cleaning up sessions:', error);
             }
         });
 
