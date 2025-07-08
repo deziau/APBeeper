@@ -7,8 +7,6 @@ const cron = require('node-cron');
 const { isHealthCheckOnly } = require('./envCheck');
 
 const { initializeDatabase } = require('./database');
-const { updateAPBPanels } = require('./services/apbPopulation');
-const { checkTwitchStreams } = require('./services/twitchNotify');
 const { updatePlayersPanels, handlePresenceUpdate, cleanupSessions } = require('./services/playersTracking');
 const logger = require('./utils/logger');
 const HealthServer = require('./health');
@@ -43,13 +41,17 @@ class APBeeperBot {
 
         for (const file of commandFiles) {
             const filePath = join(commandsPath, file);
-            const command = require(filePath);
-            
-            if ('data' in command && 'execute' in command) {
-                this.client.commands.set(command.data.name, command);
-                logger.info(`Loaded command: ${command.data.name}`);
-            } else {
-                logger.warn(`Command at ${filePath} is missing required "data" or "execute" property.`);
+            try {
+                const command = require(filePath);
+                
+                if ('data' in command && 'execute' in command) {
+                    this.client.commands.set(command.data.name, command);
+                    logger.info(`Loaded command: ${command.data.name}`);
+                } else {
+                    logger.warn(`Command at ${filePath} is missing required "data" or "execute" property.`);
+                }
+            } catch (error) {
+                logger.error(`Error loading command ${file}:`, error);
             }
         }
     }
@@ -87,7 +89,10 @@ class APBeeperBot {
             if (!this.databaseReady && this.isDatabaseCommand(interaction.commandName)) {
                 const errorMessage = 'Database is not ready yet. Please try again in a moment.';
                 try {
-                    await interaction.reply({ content: errorMessage, ephemeral: true });
+                    await interaction.reply({ 
+                        content: errorMessage, 
+                        flags: 64 // MessageFlags.Ephemeral
+                    });
                 } catch (error) {
                     logger.error('Error sending database not ready message:', error);
                 }
@@ -102,9 +107,15 @@ class APBeeperBot {
                 const errorMessage = 'There was an error while executing this command!';
                 try {
                     if (interaction.replied || interaction.deferred) {
-                        await interaction.followUp({ content: errorMessage, ephemeral: true });
+                        await interaction.followUp({ 
+                            content: errorMessage, 
+                            flags: 64 // MessageFlags.Ephemeral
+                        });
                     } else {
-                        await interaction.reply({ content: errorMessage, ephemeral: true });
+                        await interaction.reply({ 
+                            content: errorMessage, 
+                            flags: 64 // MessageFlags.Ephemeral
+                        });
                     }
                 } catch (followUpError) {
                     logger.error('Error sending error message:', followUpError);
@@ -187,17 +198,6 @@ class APBeeperBot {
     startScheduledTasks() {
         if (isHealthCheckOnly || !this.databaseReady) return;
         
-        // Update APB population panels every 5 minutes
-        cron.schedule('*/5 * * * *', async () => {
-            if (!this.databaseReady) return;
-            
-            try {
-                await updateAPBPanels(this.client);
-            } catch (error) {
-                logger.error('Error updating APB panels:', error);
-            }
-        });
-
         // Update players panels every 5 minutes
         cron.schedule('*/5 * * * *', async () => {
             if (!this.databaseReady) return;
@@ -206,15 +206,6 @@ class APBeeperBot {
                 await updatePlayersPanels(this.client);
             } catch (error) {
                 logger.error('Error updating players panels:', error);
-            }
-        });
-
-        // Check Twitch streams every 2 minutes
-        cron.schedule('*/2 * * * *', async () => {
-            try {
-                await checkTwitchStreams(this.client);
-            } catch (error) {
-                logger.error('Error checking Twitch streams:', error);
             }
         });
 
