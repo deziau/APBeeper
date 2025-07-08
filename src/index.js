@@ -16,6 +16,7 @@ const HealthServer = require('./health');
 class APBeeperBot {
     constructor() {
         this.healthServer = new HealthServer(this);
+        this.databaseReady = false;
         
         // Only initialize Discord client if not in health-check-only mode
         if (!isHealthCheckOnly) {
@@ -59,14 +60,18 @@ class APBeeperBot {
         this.client.once('ready', async () => {
             logger.info(`${this.client.user.tag} is online!`);
             
-            // Initialize database
-            await initializeDatabase();
+            // Initialize database with retry logic
+            await this.initializeDatabaseWithRetry();
             
             // Deploy commands
             await this.deployCommands();
             
-            // Start scheduled tasks
-            this.startScheduledTasks();
+            // Start scheduled tasks only if database is ready
+            if (this.databaseReady) {
+                this.startScheduledTasks();
+            } else {
+                logger.warn('Database not ready, scheduled tasks will not start');
+            }
         });
 
         this.client.on('interactionCreate', async interaction => {
@@ -78,22 +83,39 @@ class APBeeperBot {
                 return;
             }
 
+            // Check if database is ready for database-dependent commands
+            if (!this.databaseReady && this.isDatabaseCommand(interaction.commandName)) {
+                const errorMessage = 'Database is not ready yet. Please try again in a moment.';
+                try {
+                    await interaction.reply({ content: errorMessage, ephemeral: true });
+                } catch (error) {
+                    logger.error('Error sending database not ready message:', error);
+                }
+                return;
+            }
+
             try {
                 await command.execute(interaction);
             } catch (error) {
                 logger.error(`Error executing command ${interaction.commandName}:`, error);
                 
                 const errorMessage = 'There was an error while executing this command!';
-                if (interaction.replied || interaction.deferred) {
-                    await interaction.followUp({ content: errorMessage, ephemeral: true });
-                } else {
-                    await interaction.reply({ content: errorMessage, ephemeral: true });
+                try {
+                    if (interaction.replied || interaction.deferred) {
+                        await interaction.followUp({ content: errorMessage, ephemeral: true });
+                    } else {
+                        await interaction.reply({ content: errorMessage, ephemeral: true });
+                    }
+                } catch (followUpError) {
+                    logger.error('Error sending error message:', followUpError);
                 }
             }
         });
 
-        // Handle presence updates for player tracking
+        // Handle presence updates for player tracking (only if database is ready)
         this.client.on('presenceUpdate', async (oldPresence, newPresence) => {
+            if (!this.databaseReady) return;
+            
             try {
                 await handlePresenceUpdate(oldPresence, newPresence);
             } catch (error) {
@@ -108,6 +130,34 @@ class APBeeperBot {
         this.client.on('guildDelete', guild => {
             logger.info(`Left guild: ${guild.name} (${guild.id})`);
         });
+    }
+
+    async initializeDatabaseWithRetry(maxRetries = 3) {
+        for (let attempt = 1; attempt <= maxRetries; attempt++) {
+            try {
+                await initializeDatabase();
+                this.databaseReady = true;
+                logger.info('Database initialized successfully');
+                return;
+            } catch (error) {
+                logger.error(`Database initialization attempt ${attempt} failed:`, error);
+                
+                if (attempt === maxRetries) {
+                    logger.error('All database initialization attempts failed. Bot will continue without database features.');
+                    this.databaseReady = false;
+                    return;
+                }
+                
+                // Wait before retrying
+                await new Promise(resolve => setTimeout(resolve, 2000 * attempt));
+            }
+        }
+    }
+
+    isDatabaseCommand(commandName) {
+        // Commands that require database access
+        const databaseCommands = ['setchannel', 'removechannel'];
+        return databaseCommands.includes(commandName);
     }
 
     async deployCommands() {
@@ -135,10 +185,12 @@ class APBeeperBot {
     }
 
     startScheduledTasks() {
-        if (isHealthCheckOnly) return;
+        if (isHealthCheckOnly || !this.databaseReady) return;
         
         // Update APB population panels every 5 minutes
         cron.schedule('*/5 * * * *', async () => {
+            if (!this.databaseReady) return;
+            
             try {
                 await updateAPBPanels(this.client);
             } catch (error) {
@@ -148,6 +200,8 @@ class APBeeperBot {
 
         // Update players panels every 5 minutes
         cron.schedule('*/5 * * * *', async () => {
+            if (!this.databaseReady) return;
+            
             try {
                 await updatePlayersPanels(this.client);
             } catch (error) {
@@ -166,6 +220,8 @@ class APBeeperBot {
 
         // Cleanup old player sessions every hour
         cron.schedule('0 * * * *', async () => {
+            if (!this.databaseReady) return;
+            
             try {
                 await cleanupSessions();
             } catch (error) {
