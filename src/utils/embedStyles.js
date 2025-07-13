@@ -1,3 +1,49 @@
+const { EmbedBuilder } = require('discord.js');
+const { getGameIcon, formatDuration } = require('./gameUtils');
+const logger = require('./logger');
+
+// Color constants
+const COLORS = {
+    SUCCESS: 0x00ff00,
+    ERROR: 0xff0000,
+    INFO: 0x0099ff,
+    WARNING: 0xffaa00,
+    PLAYERS: 0x7289da,
+    GAME: 0x9932cc
+};
+
+function createSuccessEmbed(title, description) {
+    return new EmbedBuilder()
+        .setColor(COLORS.SUCCESS)
+        .setTitle(`✅ ${title}`)
+        .setDescription(description)
+        .setTimestamp();
+}
+
+function createErrorEmbed(title, description) {
+    return new EmbedBuilder()
+        .setColor(COLORS.ERROR)
+        .setTitle(`❌ ${title}`)
+        .setDescription(description)
+        .setTimestamp();
+}
+
+function createInfoEmbed(title, description) {
+    return new EmbedBuilder()
+        .setColor(COLORS.INFO)
+        .setTitle(`ℹ️ ${title}`)
+        .setDescription(description)
+        .setTimestamp();
+}
+
+function createWarningEmbed(title, description) {
+    return new EmbedBuilder()
+        .setColor(COLORS.WARNING)
+        .setTitle(`⚠️ ${title}`)
+        .setDescription(description)
+        .setTimestamp();
+}
+
 async function createPlayersEmbed(gameName, playersData, guild) {
     try {
         const embed = new EmbedBuilder()
@@ -137,3 +183,12 @@ async function createPlayersEmbed(gameName, playersData, guild) {
             .setTimestamp();
     }
 }
+
+module.exports = {
+    createSuccessEmbed,
+    createErrorEmbed,
+    createInfoEmbed,
+    createWarningEmbed,
+    createPlayersEmbed,
+    COLORS
+};
